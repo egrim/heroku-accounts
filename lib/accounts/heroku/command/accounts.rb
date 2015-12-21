@@ -26,16 +26,21 @@ class Heroku::Command::Accounts < Heroku::Command::Base
   #
   # add an account to the local credential store
   #
+  # --sso           # login for enterprise users under SSO
   def add
     name = args.shift
 
     error("Please specify an account name.") unless name
     error("That account already exists.") if account_exists?(name)
 
-    begin
-      username, password = auth.ask_for_credentials
-    rescue Heroku::API::Errors::NotFound
-      error('Authentication failed.')
+    if options[:sso]
+      username, password = sso_add()
+    else
+      begin
+        username, password = auth.ask_for_credentials
+      rescue Heroku::API::Errors::NotFound
+        error('Authentication failed.')
+      end
     end
 
     write_account(name, :username => username, :password => password)
@@ -123,5 +128,60 @@ class Heroku::Command::Accounts < Heroku::Command::Base
   def current_account
     account = accounts.find { |a| a[:username] == auth.user }
     account[:name] if account
+  end
+
+  def sso_add
+    launchy("Opening browser for login...", sso_url)
+
+    print "Enter your access token (typing will be hidden): "
+    begin
+      echo_off
+      token = ask
+      puts
+    ensure
+      echo_on
+    end
+
+    user = get_user_from_token(token)
+    [user, token]
+  end
+
+  def sso_url
+    ENV['SSO_URL'] || "https://sso.heroku.com/saml/#{sso_org}/init?cli=true"
+  end
+
+  def sso_org
+    org = ENV['HEROKU_ORGANIZATION']
+    while org.nil?
+      print "Enter your organization name: "
+      org = ask
+    end
+    org
+  end
+
+  def get_user_from_token(token)
+    api = Heroku::API.new(:api_key => token)
+    user_data = api.request(
+        :api_key => token,
+        :method => :get,
+        :expects => [200],
+        :path => "/account",
+        :headers => {
+          "Accept" => "application/vnd.heroku+json; version=3"
+        }
+    ).body
+    user_data['email']
+  end
+
+  def echo_off
+    with_tty do
+      system "stty -echo"
+    end
+  end
+
+  def echo_on
+    with_tty do
+      system "stty echo"
+    end
   end
 end
