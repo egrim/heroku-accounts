@@ -34,7 +34,7 @@ class Heroku::Command::Accounts < Heroku::Command::Base
     error("That account already exists.") if account_exists?(name)
 
     if options[:sso]
-      username, password = sso_add()
+      username, password = sso_auth()
     else
       begin
         username, password = auth.ask_for_credentials
@@ -60,6 +60,34 @@ class Heroku::Command::Accounts < Heroku::Command::Base
     FileUtils.rm_f(account_file(name))
 
     display "Account removed: #{name}"
+  end
+
+  # accounts:refresh
+  #
+  # refresh the auth token for an aanccount
+  #
+  # --sso           # login for enterprise users under SSO
+  def refresh
+    name = args.shift
+
+    error("Please specify an account name.") unless name
+    error("That account does not exist.") unless account_exists?(name)
+
+    if options[:sso]
+      username, password = sso_auth()
+    else
+      begin
+        username, password = auth.ask_for_credentials
+      rescue Heroku::API::Errors::NotFound
+        error('Authentication failed.')
+      end
+    end
+
+    write_account(name, :username => username, :password => password)
+
+    credentials = account(name)
+    auth.credentials = [credentials[:username], credentials[:password]]
+    auth.write_credentials
   end
 
   # accounts:set
@@ -130,7 +158,7 @@ class Heroku::Command::Accounts < Heroku::Command::Base
     account[:name] if account
   end
 
-  def sso_add
+  def sso_auth
     launchy("Opening browser for login...", sso_url)
 
     print "Enter your access token (typing will be hidden): "
